@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.10)
 project(yolo_msgs)
 
 # find dependencies
@@ -22,6 +22,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectionArray.msg"
   "srv/SetClasses.srv"
   DEPENDENCIES std_msgs geometry_msgs
+)
+
+install(FILES
+  LICENSE
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
