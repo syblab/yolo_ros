@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 /// @file
 /// @brief Execution-provider selection and ONNX Runtime session-option
@@ -74,6 +91,13 @@ std::vector<Provider> available_providers();
 std::vector<Provider> provider_chain(const std::string &requested,
                                      const std::vector<Provider> &available);
 
+/// @brief Provider string the ReID encoder should use for this build.
+/// Legacy ONNX Runtime (< 1.12) maps "auto"/"tensorrt"/"trt" to "cuda" so ReID
+/// does not open a second TensorRT session with process-wide env vars.
+/// @param[in] requested Requested provider string.
+/// @return The provider string to pass to provider_chain().
+std::string reid_provider_for_build(const std::string &requested);
+
 /// @brief Lower-case name of @p provider.
 /// @param[in] provider Provider to name.
 /// @return "cpu", "cuda", "tensorrt" or "qnn".
@@ -106,7 +130,10 @@ qnn_provider_options(const ProviderConfig &config);
 /// @param[in] config Provider configuration; @c n_threads must already be
 /// resolved (no -1 sentinel).
 /// @return The configured session options.
-/// @throws Ort::Exception if the provider cannot be appended.
+/// @throws Ort::Exception if the provider cannot be appended (modern builds).
+/// Legacy ONNX Runtime (< 1.12) appends TensorRT 7.1 through the 1.6 API and
+/// ORT_TENSORRT_* env vars; it throws std::runtime_error only when the build
+/// has no TensorRT provider, so the provider chain falls through to CUDA.
 Ort::SessionOptions build_session_options(Provider primary,
                                           const ProviderConfig &config);
 

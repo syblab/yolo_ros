@@ -1,5 +1,22 @@
-// Copyright (c) 2025 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2025 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 /// @file
 /// @brief Base ONNX Runtime model: preprocessing, inference and the
@@ -20,6 +37,8 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/opencv.hpp>
 
+#include "yolo_ros/engine/ort_compat.hpp"
+
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -27,6 +46,32 @@
 /// @addtogroup yolo_engine
 /// @{
 namespace yolo_ros::engine {
+
+/// @brief Number of images sent to the session per call.
+///
+/// A fixed model batch always wins because the graph requires that exact
+/// shape. For a dynamic batch, @p pad_to_batch forces a fixed chunk size (the
+/// final group is padded by repeating its last image) so the TensorRT
+/// optimization profile stays stable; 0 keeps the exact image count.
+/// @param fixed_batch Batch size baked into the model (0 = dynamic axis).
+/// @param pad_to_batch Requested padded batch size (0 = no padding).
+/// @param count Number of real images in the request.
+/// @return Images per session call; 0 only when @p count is 0 and no padding
+/// is requested.
+inline std::size_t resolve_batch_chunk(int64_t fixed_batch,
+                                       int64_t pad_to_batch,
+                                       std::size_t count) {
+  if (fixed_batch > 0) {
+    return static_cast<std::size_t>(fixed_batch);
+  }
+
+  if (pad_to_batch > 0) {
+    return static_cast<std::size_t>(pad_to_batch);
+  }
+
+  return count;
+}
+
 /// @brief Base class for a single ONNX Runtime YOLO model.
 ///
 /// Owns the ONNX Runtime environment, session and the reusable input buffer.
@@ -47,16 +92,24 @@ public:
 
   /// @brief Run the full pipeline (preprocess, inference, postprocess) on one
   /// image.
-  /// @param image BGR image in original (un-letterboxed) coordinates.
+  /// @param image Image in original (un-letterboxed) coordinates.
+  /// @param image_is_rgb Channel order of @p image: true for RGB, false for
+  /// BGR. Preprocessing skips the channel swap when it already matches the
+  /// model input order.
   /// @return One detection per kept object, in original-image coordinates.
-  std::vector<yolo_msgs::msg::Detection> detect(const cv::Mat &image);
+  std::vector<yolo_msgs::msg::Detection> detect(const cv::Mat &image,
+                                                bool image_is_rgb = false);
 
   /// @brief Run the full pipeline on a batch of images with one session run.
-  /// @param images BGR images in original (un-letterboxed) coordinates; they
-  /// may have different original sizes.
+  /// @param images Images in original (un-letterboxed) coordinates; they may
+  /// have different original sizes.
+  /// @param image_is_rgb Channel order per image (true = RGB, false = BGR).
+  /// When empty, every image is treated as BGR. A shorter list is padded with
+  /// BGR entries.
   /// @return One detection vector per input image, in input order.
   std::vector<std::vector<yolo_msgs::msg::Detection>>
-  detect_batch(const std::vector<cv::Mat> &images);
+  detect_batch(const std::vector<cv::Mat> &images,
+               const std::vector<bool> &image_is_rgb = {});
 
   /// @brief Name of the execution provider that initialized the session.
   /// @return "cpu", "cuda", "tensorrt" or "qnn".
@@ -65,6 +118,10 @@ public:
   /// @brief Whether inference runs through a captured CUDA graph.
   /// @return true when the session uses CUDA graph replay.
   bool using_cuda_graph() const { return this->cuda_graph_; }
+
+  /// @brief Configured batch padding for a dynamic batch axis.
+  /// @return Images per inference batch, or 0 when padding is disabled.
+  int64_t pad_to_batch() const { return this->pad_to_batch_; }
 
   /// @brief Confidence threshold for detections, in [0, 1]. @see detect()
   float conf_threshold{0.5}; // Confidence threshold for detections
@@ -83,19 +140,24 @@ protected:
 private:
   /// @brief Fixed batch size read from the graph; 0 when the axis is dynamic.
   int64_t fixed_batch_ = 0;
+  /// @brief Requested padding for a dynamic batch axis; 0 = send exact count.
+  int64_t pad_to_batch_ = 0;
   /// @brief Letterbox @p image into slice @p index of the reused batch buffer.
-  /// @param[in] image BGR image to preprocess.
+  /// @param[in] image Image to preprocess.
   /// @param[in] input_tensor_shape Batch shape to write into.
   /// @param[in] index Batch slot to write.
+  /// @param[in] image_is_rgb Channel order of @p image (true = RGB).
   void preprocess_into(const cv::Mat &image,
                        const std::vector<int64_t> &input_tensor_shape,
-                       std::size_t index);
+                       std::size_t index, bool image_is_rgb);
   /// @brief Run exactly `images.size()` images as one session call.
   /// @param[in] images Images forming the batch (all same size after
   /// letterboxing, possibly different original sizes).
+  /// @param[in] image_is_rgb Channel order per image (true = RGB).
   /// @return One detection vector per image, in order.
   std::vector<std::vector<yolo_msgs::msg::Detection>>
-  run_batch(const std::vector<cv::Mat> &images);
+  run_batch(const std::vector<cv::Mat> &images,
+            const std::vector<bool> &image_is_rgb);
   /// @brief Run the ONNX Runtime session on the preprocessed input buffer.
   /// @param[in] input_tensor_shape Shape of the input tensor.
   /// @return The raw output tensors produced by the model.
@@ -140,13 +202,15 @@ private:
   /// Ultralytics QNN exports); false for the standard channel-first NCHW.
   bool input_channel_last_{false};
 
-  // Vectors to hold allocated input and output node names
-  /// @brief Allocated storage backing inputNames.
-  std::vector<Ort::AllocatedStringPtr> input_node_name_alloc_strings;
+  // Input and output node names. The storage vectors are filled once and never
+  // resized afterwards, so the const char* views in inputNames/outputNames stay
+  // valid.
+  /// @brief Owned input node name storage.
+  std::vector<std::string> input_node_name_storage;
   /// @brief Input node names passed to the ONNX Runtime session.
   std::vector<const char *> inputNames;
-  /// @brief Allocated storage backing outputNames.
-  std::vector<Ort::AllocatedStringPtr> output_node_name_alloc_strings;
+  /// @brief Owned output node name storage.
+  std::vector<std::string> output_node_name_storage;
   /// @brief Output node names requested from the ONNX Runtime session.
   std::vector<const char *> outputNames;
 
@@ -159,6 +223,12 @@ private:
 
   /// @brief True when inference goes through CUDA graph replay.
   bool cuda_graph_{false};
+  /// @brief TensorRT engine cache directory; empty when caching is disabled.
+  std::string trt_cache_path_;
+  /// @brief True until the first session.Run(); TensorRT builds a dynamic-shape
+  /// engine lazily on that call, which can take minutes.
+  bool first_inference_{true};
+#if !YOLO_ORT_LEGACY
   /// @brief CUDA device ordinal of the graph input buffer.
   int device_id_{0};
   /// @brief CUDA memory info for the device-resident input tensor.
@@ -169,6 +239,7 @@ private:
   Ort::Value device_input_{nullptr};
   /// @brief I/O binding (device input, CPU outputs) reused every inference.
   Ort::IoBinding io_binding_{nullptr};
+#endif
 };
 
 /// @brief Slice one batch element out of a batched output tensor set.

@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -8,9 +25,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "yolo_ros/engine/ort_compat.hpp"
 #include "yolo_ros/engine/provider.hpp"
 
 namespace yolo_ros::engine {
@@ -201,6 +220,25 @@ TEST(BuildSessionOptions, AvailableGpuProvidersDoNotThrow) {
     });
   }
 }
+
+#if YOLO_ORT_LEGACY
+TEST(ReIdProvider, LegacyForcesCudaForAutoAndTensorRt) {
+  EXPECT_EQ(reid_provider_for_build(""), "cuda");
+  EXPECT_EQ(reid_provider_for_build("AUTO"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("auto"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("tensorrt"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("TRT"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("trt"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("cuda"), "cuda");
+  EXPECT_EQ(reid_provider_for_build("cpu"), "cpu");
+}
+#else
+TEST(ReIdProvider, ModernKeepsRequestedProvider) {
+  EXPECT_EQ(reid_provider_for_build("auto"), "auto");
+  EXPECT_EQ(reid_provider_for_build("tensorrt"), "tensorrt");
+  EXPECT_EQ(reid_provider_for_build("cpu"), "cpu");
+}
+#endif
 
 TEST(QnnContextPath, CreatesModelContextFile) {
   const std::filesystem::path base =

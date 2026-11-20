@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/plugins/detect_3d_plugin.hpp"
 
@@ -34,18 +51,18 @@ namespace yolo_ros {
 void Detect3DPlugin::declare_params(rclcpp_lifecycle::LifecycleNode &node,
                                     const std::string &prefix) {
   node.declare_parameter<std::string>(prefix + "target_frame", "base_link");
-  node.declare_parameter<int>(prefix + "depth_image_units_divisor", 1000);
-  node.declare_parameter<bool>(prefix + "enable_orientation", false);
-  node.declare_parameter<int>(prefix + "min_seg_points_for_orientation", 20);
+  node.declare_parameter<int>(prefix + "depth.units_divisor", 1000);
+  node.declare_parameter<bool>(prefix + "orientation.enable", false);
+  node.declare_parameter<int>(prefix + "orientation.min_seg_points", 20);
 }
 
 void Detect3DPlugin::get_params(const rclcpp_lifecycle::LifecycleNode &node,
                                 const std::string &prefix) {
   node.get_parameter(prefix + "target_frame", this->target_frame_);
-  node.get_parameter(prefix + "depth_image_units_divisor",
+  node.get_parameter(prefix + "depth.units_divisor",
                      this->depth_image_units_divisor_);
-  node.get_parameter(prefix + "enable_orientation", this->enable_orientation_);
-  node.get_parameter(prefix + "min_seg_points_for_orientation",
+  node.get_parameter(prefix + "orientation.enable", this->enable_orientation_);
+  node.get_parameter(prefix + "orientation.min_seg_points",
                      this->min_seg_points_for_orientation_);
 }
 
@@ -129,7 +146,7 @@ std::vector<yolo_msgs::msg::Detection> Detect3DPlugin::process_detections(
   }
 
   // Passthrough depth view preserving the source encoding: 16UC1 raw units
-  // (depth_utils divides them by depth_image_units_divisor below) or 32FC1
+  // (depth_utils divides them by depth.units_divisor below) or 32FC1
   // metres (already metric, so depth_utils ignores the divisor), like the
   // Python node's "passthrough" encoding.
   const cv::Mat depth_image = frame->depth_image();

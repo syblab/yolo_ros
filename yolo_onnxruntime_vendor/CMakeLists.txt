@@ -6,6 +6,20 @@ option(ONNX_GPU "Use GPU for inference" OFF)
 # ROS 2 package configuration
 find_package(ament_cmake REQUIRED)
 
+# Opt out of vendoring, for example in conda-forge/robostack where an
+# onnxruntime package (CPU or CUDA build) is available in the distribution.
+# Uses the AMENT_VENDOR_POLICY convention of ament_cmake_vendor_package.
+if(DEFINED AMENT_VENDOR_POLICY AND
+   (AMENT_VENDOR_POLICY STREQUAL "NEVER_VENDOR" OR
+    AMENT_VENDOR_POLICY STREQUAL "NEVER_VENDOR_IGNORE_SATISFIED_CHECK"))
+    find_package(onnxruntime CONFIG REQUIRED)
+    message(STATUS "Using installed ONNX Runtime ${onnxruntime_VERSION} from ${onnxruntime_DIR}")
+    install(FILES THIRD_PARTY_NOTICES.md DESTINATION share/${PROJECT_NAME})
+    # When this package is found, make sure to find the installed onnxruntime
+    ament_package(CONFIG_EXTRAS "yolo_onnxruntime_vendor-extras.cmake")
+    return()
+endif()
+
 # Version and variant selection for the prebuilt download. All four are cache
 # variables so they can be overridden with `colcon build --cmake-args`.
 set(ONNXRUNTIME_VERSION "" CACHE STRING
@@ -13,7 +27,7 @@ set(ONNXRUNTIME_VERSION "" CACHE STRING
 set(ONNX_GPU_SUFFIX "" CACHE STRING
     "GPU tarball suffix override (e.g. -gpu, -gpu_cuda12, -gpu_cuda13)")
 set(ONNX_CUDA_MAJOR "" CACHE STRING
-    "CUDA major version for the GPU prebuilt (11, 12 or 13); auto-detected when unset")
+    "CUDA major version for the GPU prebuilt (10, 11, 12 or 13); auto-detected when unset")
 set(ONNXRUNTIME_URL "" CACHE STRING
     "Full ONNX Runtime tarball URL override (skips version/suffix selection)")
 
@@ -43,7 +57,9 @@ else()
                 "Prebuilt GPU ONNX Runtime tarballs are x86_64-only. On "
                 "${CMAKE_SYSTEM_PROCESSOR} build from source with "
                 "scripts/build_ort_from_source.sh <version> --ep cuda "
-                "[--cuda-arch NN], then reconfigure with -DONNXRUNTIME_ROOT=<prefix>.")
+                "[--cuda-arch NN], then reconfigure with -DONNXRUNTIME_ROOT=<prefix>. "
+                "For CUDA 10.2 (JetPack 4) build ONNX Runtime 1.6.0 with "
+                "--cuda-arch 53 (Nano), 62 (TX2) or 72 (Xavier).")
         endif()
 
         # The CUDA generation decides which ONNX Runtime release to use, not the
@@ -89,9 +105,16 @@ else()
             endif()
         endif()
 
-        # Curated prebuilt combinations. CUDA 11 stops shipping C++ GPU
-        # tarballs after 1.18; CUDA 13 starts at 1.28. cuDNN major must match.
-        if(ONNX_CUDA_MAJOR STREQUAL "11")
+        # Curated prebuilt combinations. CUDA 10.2 is the legacy path: ONNX
+        # Runtime 1.6.0, CUDA + TensorRT 7.1 when the prefix was built with
+        # --use_tensorrt; no CUDA graph. The prebuilt tarball is CUDA-only.
+        # CUDA 11 stops shipping C++ GPU tarballs after 1.18; CUDA 13 starts
+        # at 1.28. cuDNN major must match.
+        if(ONNX_CUDA_MAJOR STREQUAL "10")
+            set(_ort_default "1.6.0")
+            set(_suffix_default "-gpu")
+            set(_cudnn_default "8")
+        elseif(ONNX_CUDA_MAJOR STREQUAL "11")
             set(_ort_default "1.18.0")
             set(_suffix_default "-gpu")
             set(_cudnn_default "8")
@@ -107,7 +130,9 @@ else()
             message(FATAL_ERROR
                 "Unsupported or undetected CUDA major version "
                 "('${ONNX_CUDA_MAJOR}'). Supported prebuilt combinations: "
-                "11 (ORT 1.18.0), 12 (ORT 1.20.0), 13 (ORT 1.28.0). Pass "
+                "10 (ORT 1.6.0, CUDA; TensorRT 7.1 in a source build), "
+                "11 (ORT 1.18.0), "
+                "12 (ORT 1.20.0), 13 (ORT 1.28.0). Pass "
                 "-DONNX_CUDA_MAJOR=<major>, or build from source with "
                 "scripts/build_ort_from_source.sh and use "
                 "-DONNXRUNTIME_ROOT=<prefix>.")
@@ -124,6 +149,11 @@ else()
         message(STATUS
             "ONNX Runtime GPU: CUDA ${ONNX_CUDA_MAJOR} -> ${ONNXRUNTIME_VERSION} "
             "'${ONNX_GPU_SUFFIX}' (requires cuDNN ${_cudnn_default} at run time)")
+        if(ONNX_CUDA_MAJOR STREQUAL "10")
+            message(STATUS
+                "  CUDA 10.2 legacy path: this prebuilt tarball is CUDA-only; "
+                "a source build adds TensorRT 7.1; no CUDA graph.")
+        endif()
     else()
         if(NOT ONNXRUNTIME_VERSION)
             set(ONNXRUNTIME_VERSION "1.20.0")
@@ -176,7 +206,6 @@ install(DIRECTORY ${ONNXRUNTIME_INSTALL_DIR}/lib DESTINATION .)
 install(DIRECTORY ${ONNXRUNTIME_INSTALL_DIR}/include DESTINATION .)
 
 install(FILES
-    LICENSE
     THIRD_PARTY_NOTICES.md
     DESTINATION share/${PROJECT_NAME}
 )

@@ -1,5 +1,22 @@
-// Copyright (c) 2025 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2025 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/yolo/utils.hpp"
 
@@ -9,6 +26,12 @@
 namespace yolo_ros::yolo::utils {
 cv::Mat letterbox(const cv::Mat &img, const cv::Size &new_shape,
                   const cv::Scalar &color) {
+  if (img.empty() || img.size() == new_shape) {
+    // No geometry change: return the source view instead of resizing and
+    // copying an identical image (the common camera-at-model-resolution case).
+    return img;
+  }
+
   float ratio = std::min(static_cast<float>(new_shape.width) / img.cols,
                          static_cast<float>(new_shape.height) / img.rows);
   cv::Mat img_out;
@@ -24,8 +47,18 @@ cv::Mat letterbox(const cv::Mat &img, const cv::Size &new_shape,
   int pad_top = pad_h / 2;
   int pad_bottom = pad_h - pad_top;
 
-  cv::resize(img, img_out, cv::Size(new_width, new_height), 0, 0,
-             cv::INTER_LINEAR);
+  if (new_width == img.cols && new_height == img.rows) {
+    // Aspect ratio already matches; only padding remains.
+    img_out = img;
+  } else {
+    cv::resize(img, img_out, cv::Size(new_width, new_height), 0, 0,
+               cv::INTER_LINEAR);
+  }
+
+  if (pad_w == 0 && pad_h == 0) {
+    return img_out;
+  }
+
   cv::copyMakeBorder(img_out, img_out, pad_top, pad_bottom, pad_left, pad_right,
                      cv::BORDER_CONSTANT, color);
   return img_out;

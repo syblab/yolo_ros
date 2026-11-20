@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <gtest/gtest.h>
 
@@ -15,6 +32,26 @@
 
 namespace yolo_ros {
 namespace {
+
+// The chunk size decides how many images are sent in one session call and
+// whether the final group is padded by repeating its last image.
+TEST(BatchSizing, FixedBatchAxisWinsOverPadding) {
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(2, 4, 1), 2u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(2, 4, 3), 2u);
+}
+
+TEST(BatchSizing, PadsDynamicBatchToRequestedSize) {
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 4, 1), 4u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 4, 3), 4u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 4, 4), 4u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 4, 5), 4u);
+}
+
+TEST(BatchSizing, DynamicBatchWithoutPaddingUsesImageCount) {
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 0, 1), 1u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, 0, 3), 3u);
+  EXPECT_EQ(yolo_ros::engine::resolve_batch_chunk(0, -1, 2), 2u);
+}
 
 // Splitting a batched output tensor into per-image {1, ...} views is what lets
 // the unchanged task postprocessors read one image at a time.
@@ -132,6 +169,27 @@ TEST(DynamicBatchDetect, RunsSeveralImagesInOneBatch) {
   for (std::size_t i = 0; i < batched[0].size(); ++i) {
     EXPECT_FLOAT_EQ(batched[0][i].score, batched[1][i].score);
   }
+}
+
+// pad_to_batch must reach the model and pad a dynamic batch without changing
+// the number of results returned for the real images.
+TEST(DynamicBatchPadding, PadsSingleImageToConfiguredBatch) {
+  const std::string model = yolo_ros::test::download_model(
+      "zwh20081/yolo26-onnx", "yolo26n-dyn.onnx");
+  const cv::Mat image = yolo_ros::test::download_sample_image();
+
+  if (model.empty() || image.empty()) {
+    GTEST_SKIP() << "yolo26n-dyn.onnx or the sample image is unavailable";
+  }
+
+  auto params = yolo_ros::test::make_params(model);
+  params.pad_to_batch = 4;
+  yolo_ros::yolo::YoloDetect detector(params);
+
+  EXPECT_EQ(detector.pad_to_batch(), 4);
+  const auto padded = detector.detect_batch({image});
+  ASSERT_EQ(padded.size(), 1u);
+  EXPECT_FALSE(padded[0].empty());
 }
 
 // A model with a fixed batch > 1 exercises the partial-chunk padding path:

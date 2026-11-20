@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <gtest/gtest.h>
 
@@ -82,6 +99,21 @@ TEST(Letterbox, PreservesAspectAndPads) {
   EXPECT_EQ(out.at<cv::Vec3b>(0, 0)[0], 114); // top pad row
   EXPECT_EQ(out.at<cv::Vec3b>(7, 7)[0], 114); // bottom pad row
   EXPECT_EQ(out.at<cv::Vec3b>(4, 4)[0], 255); // genuine content
+}
+
+TEST(Letterbox, SameSizeReturnsSourceView) {
+  cv::Mat img(3, 4, CV_8UC3, cv::Scalar(255, 0, 0));
+  const cv::Mat out = letterbox(img, cv::Size(4, 3), cv::Scalar(114, 114, 114));
+  EXPECT_EQ(out.data, img.data); // no resize/copy when geometry is unchanged
+}
+
+TEST(Letterbox, MatchingAspectSkipsBorderCopy) {
+  cv::Mat img(3, 4, CV_8UC3, cv::Scalar(255, 0, 0));
+  const cv::Mat out = letterbox(img, cv::Size(8, 6), cv::Scalar(114, 114, 114));
+  ASSERT_EQ(out.size(), cv::Size(8, 6));
+  // Every pixel is genuine content; a gray border would show up at a corner.
+  EXPECT_EQ(out.at<cv::Vec3b>(0, 0)[0], 255);
+  EXPECT_EQ(out.at<cv::Vec3b>(5, 7)[0], 255);
 }
 
 TEST(BgrToRgb, SwapsRedAndBlue) {
