@@ -41,7 +41,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "params_file",
                 default_value=os.path.join(
-                    get_package_share_directory("yolo_bringup"), "config", "yolo.yaml"
+                    get_package_share_directory("yolo_bringup"), "config", "yolo_pose_multi.yaml"
                 ),
                 description="Pipeline YAML: cameras, ordered plugins and params",
             ),

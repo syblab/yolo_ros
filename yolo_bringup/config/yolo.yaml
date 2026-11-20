@@ -11,7 +11,7 @@
     plugins: ["detection", "tracking", "detection3d", "debug"]
     cameras: ["cam0"]
     cam0:
-      rgb_topic: /camera/rgb/image_raw
+      rgb_topic: /camera/color/image_raw
       depth_topic: /camera/depth/image_raw
       depth_info_topic: /camera/depth/camera_info
       image_reliability: 1
@@ -40,7 +40,7 @@
     detection3d:
       plugin: yolo_ros/Detect3DPlugin
       cameras: ["cam0"]
-      target_frame: base_link
+      target_frame: camera_link
     debug:
       plugin: yolo_ros/DebugPlugin
       cameras: ["cam0"]
