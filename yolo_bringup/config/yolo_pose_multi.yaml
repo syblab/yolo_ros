@@ -20,7 +20,7 @@
       plugin: yolo_ros/DetectionPlugin
       model_type: pose
       model_repo: unileon-robotics/YOLO26-ONNX
-      model_filename: yolo26s-pose.onnx
+      model_filename: yolo26n-pose.onnx
       threshold: 0.7
       iou: 0.45
       n_threads: -1
