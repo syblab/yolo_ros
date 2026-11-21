@@ -1,6 +1,23 @@
-// Copyright (c) 2025 Alejandro González Cantón
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2025 Alejandro González Cantón
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 /// @file
 /// @brief Shared box, keypoint and parameter types plus the IoU/NMS,
@@ -176,6 +193,11 @@ struct YoloParams {
   int max_fps; // cap on the inference/publish rate in Hz; 0 = unlimited
                // (process every received frame). Frames are dropped by the
                // node, the subscription stays live.
+  /// @brief Pad each inference batch to this size when the model batch axis is
+  /// dynamic (0 = send the exact image count). A stable batch size keeps the
+  /// TensorRT optimization profile valid, so the cached engine is reused
+  /// instead of rebuilt. Ignored for models with a fixed batch axis.
+  int pad_to_batch = 0;
   /// @brief Network input width for dynamic-input models.
   int img_width = 640;
   /// @brief Network input height for dynamic-input models.
@@ -257,7 +279,9 @@ std::vector<int> nms(std::vector<BoxT> &boxes, float iou_threshold,
 /// @param[in] img Source BGR image.
 /// @param[in] new_shape Target network input size.
 /// @param[in] color Padding color.
-/// @return The letterboxed image.
+/// @return The letterboxed image. When @p img already has the target size (or
+/// its aspect ratio matches and no padding is needed), the returned Mat aliases
+/// @p img instead of copying it, so callers must not draw on it in place.
 cv::Mat letterbox(const cv::Mat &img, const cv::Size &new_shape,
                   const cv::Scalar &color);
 /// @brief Convert an OpenCV BGR image to RGB (channel order only).

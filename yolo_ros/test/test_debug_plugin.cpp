@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/plugins/debug_plugin.hpp"
 
@@ -11,9 +28,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <thread>
 
+#include <opencv2/imgcodecs.hpp>
+
+#include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "yolo_msgs/msg/detection.hpp"
@@ -70,11 +91,15 @@ TEST_F(DebugPluginTest, DrawsCameraFrameAndMarkers) {
                                   {{"cam0", "cam0", "cam0/detections", false}}};
   ASSERT_TRUE(plugin.setup(context));
   EXPECT_TRUE(blackboard.has_producer("cam0/debug_image"));
+  EXPECT_TRUE(blackboard.has_producer("cam0/debug_image/compressed"));
   EXPECT_TRUE(blackboard.has_producer("cam0/debug_bb_markers"));
   EXPECT_TRUE(blackboard.has_producer("cam0/debug_kp_markers"));
 
   auto debug_reader =
       blackboard.subscribe<sensor_msgs::msg::Image>("cam0/debug_image", 1);
+  auto compressed_reader =
+      blackboard.subscribe<sensor_msgs::msg::CompressedImage>(
+          "cam0/debug_image/compressed", 1);
   auto bb_marker_reader =
       blackboard.subscribe<visualization_msgs::msg::MarkerArray>(
           "cam0/debug_bb_markers", 1);
@@ -107,6 +132,8 @@ TEST_F(DebugPluginTest, DrawsCameraFrameAndMarkers) {
 
   std::shared_ptr<const sensor_msgs::msg::Image> out;
   const bool image_received = debug_reader.wait(out, 1000ms);
+  std::shared_ptr<const sensor_msgs::msg::CompressedImage> compressed;
+  const bool compressed_received = compressed_reader.wait(compressed, 1000ms);
 
   // Phase 2: a 3D detection with a box and a keypoint pair matching skeleton
   // limb {1, 2}, published on the same detections channel. The input carries
@@ -161,6 +188,14 @@ TEST_F(DebugPluginTest, DrawsCameraFrameAndMarkers) {
   EXPECT_EQ(out->encoding, "bgr8");
   EXPECT_EQ(out->header.stamp.sec, frame->header.stamp.sec);
   EXPECT_EQ(out->header.stamp.nanosec, frame->header.stamp.nanosec);
+
+  ASSERT_TRUE(compressed_received);
+  EXPECT_EQ(compressed->format, "jpeg");
+  EXPECT_EQ(compressed->header.stamp.sec, frame->header.stamp.sec);
+  EXPECT_EQ(compressed->header.stamp.nanosec, frame->header.stamp.nanosec);
+  ASSERT_GE(compressed->data.size(), 2u);
+  EXPECT_EQ(compressed->data[0], 0xFF); // JPEG SOI marker
+  EXPECT_EQ(compressed->data[1], 0xD8);
 
   int changed_pixels = 0;
   for (int y = 2; y <= 5; ++y) {
@@ -278,4 +313,121 @@ TEST_F(DebugPluginTest, DrawsFreshestUpstreamWhileMarkersUseChainInput) {
   ASSERT_EQ(out->height, 8u);
   ASSERT_TRUE(bb_received);
   ASSERT_FALSE(bb_markers->markers.empty());
+}
+
+TEST_F(DebugPluginTest, CompressedTopicCanBeDisabled) {
+  auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>("debug_test");
+  yolo_ros::Blackboard blackboard;
+  yolo_ros::TopicRegistry topics;
+
+  yolo_ros::DebugPlugin plugin;
+  plugin.declare_params(*node, "dbg.");
+  node->set_parameter(rclcpp::Parameter("dbg.compressed.enable", false));
+  plugin.get_params(*node, "dbg.");
+
+  yolo_ros::PluginContext context{blackboard,
+                                  topics,
+                                  node->get_logger(),
+                                  node->get_clock(),
+                                  nullptr,
+                                  "dbg",
+                                  {{"cam0", "cam0", "cam0/detections", false}}};
+  ASSERT_TRUE(plugin.setup(context));
+  EXPECT_TRUE(blackboard.has_producer("cam0/debug_image"));
+  EXPECT_FALSE(blackboard.has_producer("cam0/debug_image/compressed"));
+}
+
+TEST_F(DebugPluginTest, CompressedImageDecodesToAnnotatedDebugImage) {
+  auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>("debug_test");
+  yolo_ros::Blackboard blackboard;
+  yolo_ros::TopicRegistry topics;
+
+  yolo_ros::DebugPlugin plugin;
+  plugin.declare_params(*node, "dbg.");
+  plugin.get_params(*node, "dbg.");
+
+  yolo_ros::PluginContext context{blackboard,
+                                  topics,
+                                  node->get_logger(),
+                                  node->get_clock(),
+                                  nullptr,
+                                  "dbg",
+                                  {{"cam0", "cam0", "cam0/detections", false}}};
+  ASSERT_TRUE(plugin.setup(context));
+
+  auto debug_reader =
+      blackboard.subscribe<sensor_msgs::msg::Image>("cam0/debug_image", 1);
+  auto compressed_reader =
+      blackboard.subscribe<sensor_msgs::msg::CompressedImage>(
+          "cam0/debug_image/compressed", 1);
+
+  std::atomic<bool> stop{false};
+  std::thread worker([&plugin, &stop] { plugin.run(stop); });
+  std::this_thread::sleep_for(20ms);
+
+  // 64x64 mid-gray frame: large enough that JPEG noise stays low, and flat
+  // enough that an unchanged (unannotated) picture is easy to detect.
+  auto frame = std::make_shared<yolo_ros::CameraFrame>();
+  frame->header.stamp.sec = 2;
+  frame->header.stamp.nanosec = 11;
+  frame->header.frame_id = "camera";
+  auto image = std::make_shared<sensor_msgs::msg::Image>();
+  image->header = frame->header;
+  image->height = 64;
+  image->width = 64;
+  image->encoding = "bgr8";
+  image->is_bigendian = 0;
+  image->step = 64 * 3;
+  image->data.assign(64 * 64 * 3, 96);
+  frame->rgb = image;
+
+  auto detections = std::make_shared<yolo_msgs::msg::DetectionArray>();
+  detections->header = frame->header;
+  yolo_msgs::msg::Detection detection;
+  detection.class_name = "person";
+  detection.score = 0.9;
+  detection.bbox.center.position.x = 32.0;
+  detection.bbox.center.position.y = 32.0;
+  detection.bbox.size.x = 20.0;
+  detection.bbox.size.y = 20.0;
+  detections->detections.push_back(detection);
+
+  blackboard.publish<yolo_ros::CameraFrame>("cam0", frame);
+  blackboard.publish<yolo_msgs::msg::DetectionArray>("cam0/detections",
+                                                     detections);
+
+  std::shared_ptr<const sensor_msgs::msg::Image> out;
+  std::shared_ptr<const sensor_msgs::msg::CompressedImage> compressed;
+  const bool image_received = debug_reader.wait(out, 1000ms);
+  const bool compressed_received = compressed_reader.wait(compressed, 1000ms);
+
+  stop = true;
+  blackboard.wake_all();
+  worker.join();
+
+  ASSERT_TRUE(image_received);
+  ASSERT_TRUE(compressed_received);
+
+  // The payload must decode to the annotated image the plugin published, not
+  // to the untouched camera frame: compare against the raw debug image with a
+  // small tolerance for JPEG loss and require the drawn box to be present.
+  const cv::Mat decoded = cv::imdecode(compressed->data, cv::IMREAD_COLOR);
+  ASSERT_FALSE(decoded.empty());
+  ASSERT_EQ(decoded.cols, static_cast<int>(out->width));
+  ASSERT_EQ(decoded.rows, static_cast<int>(out->height));
+  ASSERT_EQ(decoded.channels(), 3);
+
+  const cv::Mat published(static_cast<int>(out->height),
+                          static_cast<int>(out->width), CV_8UC3,
+                          const_cast<std::uint8_t *>(out->data.data()),
+                          static_cast<std::size_t>(out->step));
+  cv::Mat annotated_diff;
+  cv::absdiff(decoded, published, annotated_diff);
+  const cv::Scalar mean_diff = cv::mean(annotated_diff);
+  EXPECT_LT((mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0, 5.0);
+
+  const cv::Mat camera_frame(64, 64, CV_8UC3, cv::Scalar(96, 96, 96));
+  cv::Mat frame_diff;
+  cv::absdiff(decoded, camera_frame, frame_diff);
+  EXPECT_GT(cv::norm(frame_diff, cv::NORM_INF), 80.0);
 }

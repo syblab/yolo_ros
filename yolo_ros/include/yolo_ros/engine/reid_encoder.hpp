@@ -1,6 +1,23 @@
-// Copyright (c) 2026 Alejandro González Cantón
-// Portions Copyright (c) 2018 Kaiyang Zhou
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alejandro González Cantón
+// Portions Copyright (C) 2018 Kaiyang Zhou
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 /// @file
 /// @brief ONNX Runtime ReID embedding extractor for appearance association.
@@ -76,13 +93,13 @@ private:
   int input_width_ = 0;
   /// @brief Model input height.
   int input_height_ = 0;
-  /// @brief Storage backing input_names_.
-  std::vector<Ort::AllocatedStringPtr> input_name_alloc_;
-  /// @brief Input node names.
+  /// @brief Owned input name storage.
+  std::vector<std::string> input_name_storage_;
+  /// @brief Input names passed to the ONNX Runtime session.
   std::vector<const char *> input_names_;
-  /// @brief Storage backing output_names_.
-  std::vector<Ort::AllocatedStringPtr> output_name_alloc_;
-  /// @brief Output node names.
+  /// @brief Owned output name storage.
+  std::vector<std::string> output_name_storage_;
+  /// @brief Output names requested from the ONNX Runtime session.
   std::vector<const char *> output_names_;
   /// @brief Reusable input batch buffer.
   std::vector<float> blob_;

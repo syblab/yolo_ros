@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/plugin/plugin_host.hpp"
 
@@ -32,7 +49,7 @@ struct HostFixture {
     std::vector<rclcpp::Parameter> parameters;
 
     for (const auto &camera : cameras) {
-      parameters.emplace_back(camera + ".rgb_topic", "/" + camera + "/image");
+      parameters.emplace_back(camera + ".rgb.topic", "/" + camera + "/image");
     }
 
     parameters.insert(parameters.end(), extra.begin(), extra.end());
@@ -214,7 +231,7 @@ TEST_F(PluginHostTest, MissingPluginFieldFailsConfigure) {
 TEST_F(PluginHostTest, WiresChainInOrder) {
   rclcpp::NodeOptions options;
   options.parameter_overrides(
-      {rclcpp::Parameter("cam0.rgb_topic", "/camera0/image"),
+      {rclcpp::Parameter("cam0.rgb.topic", "/camera0/image"),
        rclcpp::Parameter("det.plugin", "yolo_ros/DetectionPlugin"),
        rclcpp::Parameter("dbg.plugin", "yolo_ros/DebugPlugin")});
   auto node =
@@ -311,7 +328,7 @@ TEST_F(PluginHostTest, RejectsChainViolations) {
   {
     rclcpp::NodeOptions options;
     options.parameter_overrides(
-        {rclcpp::Parameter("cam0.rgb_topic", "/camera0/image"),
+        {rclcpp::Parameter("cam0.rgb.topic", "/camera0/image"),
          rclcpp::Parameter("p.plugin", "yolo_ros/TrackingPlugin")});
     auto node =
         std::make_shared<rclcpp_lifecycle::LifecycleNode>("host_test", options);
@@ -331,7 +348,7 @@ TEST_F(PluginHostTest, RejectsChainViolations) {
   {
     rclcpp::NodeOptions options;
     options.parameter_overrides(
-        {rclcpp::Parameter("cam0.rgb_topic", "/camera0/image"),
+        {rclcpp::Parameter("cam0.rgb.topic", "/camera0/image"),
          rclcpp::Parameter("p.plugin", "yolo_ros/DetectionPlugin"),
          rclcpp::Parameter("q.plugin", "yolo_ros/DetectionPlugin")});
     auto node =
@@ -352,7 +369,7 @@ TEST_F(PluginHostTest, RejectsChainViolations) {
   {
     rclcpp::NodeOptions options;
     options.parameter_overrides(
-        {rclcpp::Parameter("cam0.rgb_topic", "/camera0/image"),
+        {rclcpp::Parameter("cam0.rgb.topic", "/camera0/image"),
          rclcpp::Parameter("p.plugin", "yolo_ros/DetectionPlugin"),
          rclcpp::Parameter("q.plugin", "yolo_ros/DebugPlugin"),
          rclcpp::Parameter("r.plugin", "yolo_ros/DetectionPlugin")});

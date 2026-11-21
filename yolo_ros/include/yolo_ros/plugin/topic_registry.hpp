@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 /// @file
 /// @brief Deduplicating bridge between blackboard channels and ROS topics.
@@ -87,6 +104,19 @@ public:
   std::size_t publisher_entity_count() const {
     return this->publisher_entities_.size();
   }
+
+  /// @brief Whether @p channel currently has a created ROS publisher.
+  /// @param channel Blackboard channel name.
+  /// @return True once create_entities() created the publisher.
+  bool has_publisher(const std::string &channel) const;
+
+  /// @brief Whether the ROS publisher of @p channel has subscribers.
+  ///
+  /// Used to skip expensive output generation (e.g. JPEG encoding) while
+  /// nobody listens. Returns false when the channel has no publisher.
+  /// @param channel Blackboard channel name.
+  /// @return True when at least one ROS subscription is matched.
+  bool has_subscribers(const std::string &channel) const;
 
 private:
   /// @brief Deleted copy constructor.

@@ -1,5 +1,22 @@
-// Copyright (c) 2025 Alejandro González Cantón
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2025 Alejandro González Cantón
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/engine/model.hpp"
 
@@ -10,6 +27,7 @@
 #endif
 
 #include "yolo_ros/engine/input_shape.hpp"
+#include "yolo_ros/engine/ort_compat.hpp"
 #include "yolo_ros/engine/provider.hpp"
 #include "yolo_ros/utils/cpu_utils.hpp"
 #include "yolo_ros/utils/logs.hpp"
@@ -26,6 +44,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -114,6 +133,12 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   this->iou_threshold = params.iou;
   std::string model_path = params.model_path;
 
+  const auto load_start = std::chrono::steady_clock::now();
+  YOLO_LOG_INFO("Loading model: %s (task=%s, requested provider='%s', "
+                "device='%s')",
+                model_path.c_str(), task.c_str(), params.provider.c_str(),
+                params.device.c_str());
+
   if (n_threads <= 0) {
     n_threads = yolo_ros::utils::num_math_threads();
   }
@@ -169,6 +194,8 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   std::string last_error;
   std::string trt_cache_path;
 
+  YOLO_LOG_INFO("Initializing ONNX Runtime session");
+
   for (const Provider provider : chain) {
     ProviderConfig config;
     config.n_threads = n_threads;
@@ -211,16 +238,37 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
       }
     }
 
+    YOLO_LOG_INFO("Creating %s session for %s...", provider_name(provider),
+                  model_path.c_str());
+    const auto provider_start = std::chrono::steady_clock::now();
+
     try {
       this->session_options = build_session_options(provider, config);
       this->session = Ort::Session(this->env, session_model_path.c_str(),
                                    this->session_options);
       this->active_provider_ = provider_name(provider);
+
+      const double provider_seconds =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        provider_start)
+              .count();
+      if (provider == Provider::TensorRt) {
+        YOLO_LOG_INFO("TensorRT session created in %.2f s (the engine is built "
+                      "on the first inference for dynamic shapes).",
+                      provider_seconds);
+      } else {
+        YOLO_LOG_INFO("%s session ready in %.2f s.", provider_name(provider),
+                      provider_seconds);
+      }
       break;
-    } catch (const Ort::Exception &e) {
+    } catch (const std::exception &e) {
       last_error = e.what();
-      YOLO_LOG_WARN("Execution provider %s failed to initialize: %s",
-                    provider_name(provider), e.what());
+      const double provider_seconds =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        provider_start)
+              .count();
+      YOLO_LOG_WARN("Execution provider %s failed after %.2f s: %s",
+                    provider_name(provider), provider_seconds, e.what());
     }
   }
 
@@ -233,8 +281,12 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   // Names the primary EP that accepted the session; within a TensorRT session
   // ORT may still fall back node-by-node to CUDA.
   YOLO_LOG_INFO("Using execution provider: %s", this->active_provider_.c_str());
+  this->trt_cache_path_ = trt_cache_path;
 
-  Ort::AllocatorWithDefaultOptions allocator;
+  if (this->active_provider_ == "tensorrt") {
+    YOLO_LOG_INFO("TensorRT may compile an "
+                  "engine and this can take several minutes on the first run.");
+  }
 
   // Read the input shape first: a fixed batch axis is a prerequisite for CUDA
   // graph capture (dynamic shapes invalidate a captured graph).
@@ -254,6 +306,7 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
 
     this->fixed_batch_ =
         input_tensor_shape_vec[0] > 0 ? input_tensor_shape_vec[0] : 0;
+    this->pad_to_batch_ = std::max<int64_t>(0, params.pad_to_batch);
 
     const InputShape resolved = resolve_input_shape(
         input_tensor_shape_vec, params.img_width, params.img_height);
@@ -262,16 +315,23 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
 
     if (resolved.params_ignored) {
       YOLO_LOG_WARN("Model has static input dimension(s); using %dx%d "
-                    "(img_width/img_height are ignored for those).",
+                    "(input.width/input.height are ignored for those).",
                     resolved.width, resolved.height);
     } else if (resolved.from_params) {
       YOLO_LOG_INFO("Dynamic input size in the ONNX graph; using %dx%d from "
-                    "img_width/img_height.",
+                    "input.width/input.height.",
                     resolved.width, resolved.height);
     }
   }
 
-#if defined(YOLO_ROS_HAS_CUDA_RUNTIME)
+#if YOLO_ORT_LEGACY
+  if (params.cuda_graph_enable) {
+    YOLO_LOG_WARN("cuda.graph_enable is not supported by this legacy ONNX "
+                  "Runtime build; ignoring.");
+  }
+#endif
+
+#if defined(YOLO_ROS_HAS_CUDA_RUNTIME) && !YOLO_ORT_LEGACY
   // Rebuild the session with CUDA graphs when the model allows it: replaying
   // the captured kernels removes most per-frame launch overhead.
   if (params.cuda_graph_enable && this->active_provider_ == "cuda" &&
@@ -301,19 +361,20 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   this->num_input_nodes = this->session.GetInputCount();
   this->num_output_nodes = this->session.GetOutputCount();
 
-  // Allocate input and output node names
-  for (size_t i = 0; i < this->num_input_nodes; i++) {
-    this->input_node_name_alloc_strings.push_back(
-        this->session.GetInputNameAllocated(i, allocator));
-    this->inputNames.push_back(
-        this->input_node_name_alloc_strings.back().get());
+  // Node names come from the compat layer so the same code works against the
+  // legacy (1.6) and modern ONNX Runtime string APIs.
+  this->input_node_name_storage = compat::input_names(this->session);
+  this->inputNames.reserve(this->input_node_name_storage.size());
+
+  for (const std::string &name : this->input_node_name_storage) {
+    this->inputNames.push_back(name.c_str());
   }
 
-  for (size_t i = 0; i < this->num_output_nodes; i++) {
-    this->output_node_name_alloc_strings.push_back(
-        this->session.GetOutputNameAllocated(i, allocator));
-    this->outputNames.push_back(
-        this->output_node_name_alloc_strings.back().get());
+  this->output_node_name_storage = compat::output_names(this->session);
+  this->outputNames.reserve(this->output_node_name_storage.size());
+
+  for (const std::string &name : this->output_node_name_storage) {
+    this->outputNames.push_back(name.c_str());
   }
 
   // Pre-allocate the reusable input blob (1*3*H*W floats), written in place by
@@ -340,12 +401,10 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
 
     try {
       const Ort::ModelMetadata metadata = this->session.GetModelMetadata();
-      Ort::AllocatorWithDefaultOptions allocator;
-      auto value = metadata.LookupCustomMetadataMapAllocated(
-          "input_color", static_cast<OrtAllocator *>(allocator));
+      const auto value = compat::lookup_metadata(metadata, "input_color");
 
       if (value) {
-        const std::string meta = yolo_ros::utils::to_lower(value.get());
+        const std::string meta = yolo_ros::utils::to_lower(*value);
 
         if (meta == "rgb") {
           this->input_is_rgb_ = true;
@@ -362,7 +421,7 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   this->memory_info =
       Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-#if defined(YOLO_ROS_HAS_CUDA_RUNTIME)
+#if defined(YOLO_ROS_HAS_CUDA_RUNTIME) && !YOLO_ORT_LEGACY
   if (this->cuda_graph_) {
     this->device_id_ = device_id;
     this->cuda_memory_info_ = Ort::MemoryInfo("Cuda", OrtArenaAllocator,
@@ -391,17 +450,22 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   const std::string batch_str = this->fixed_batch_ > 0
                                     ? std::to_string(this->fixed_batch_)
                                     : std::string("dynamic");
+  const double load_seconds = std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - load_start)
+                                  .count();
   const std::string trt_cache_suffix =
       trt_cache_path.empty() ? std::string() : " (" + trt_cache_path + ")";
-  YOLO_LOG_INFO("Model loaded: %s", model_path.c_str());
-  YOLO_LOG_INFO("  task=%s  model_type='%s'  provider=%s  device='%s' (id=%d)  "
+  YOLO_LOG_INFO("Model loaded: %s (total %.2f s)", model_path.c_str(),
+                load_seconds);
+  YOLO_LOG_INFO("  task=%s  model.type='%s'  provider=%s  device='%s' (id=%d)  "
                 "n_threads=%d",
                 task.c_str(), params.model_type.c_str(),
                 this->active_provider_.c_str(), params.device.c_str(),
                 device_id, n_threads);
   YOLO_LOG_INFO("  provider chain (requested '%s'): %s", requested.c_str(),
                 chain_to_string(chain).c_str());
-  YOLO_LOG_INFO("  tensorrt: fp16=%s  engine_cache=%s%s",
+  YOLO_LOG_INFO("  tensorrt: fp16=%s  engine_cache=%s%s (built on first "
+                "inference)",
                 params.trt_fp16_enable ? "on" : "off",
                 params.trt_engine_cache_enable ? "on" : "off",
                 trt_cache_suffix.c_str());
@@ -416,6 +480,16 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
                 this->input_is_rgb_ ? "rgb" : "bgr", batch_str.c_str(),
                 this->input_image_shape.width, this->input_image_shape.height);
 
+  if (this->pad_to_batch_ > 0) {
+    if (this->fixed_batch_ > 0) {
+      YOLO_LOG_INFO("  batch padding: ignored; model has a fixed batch of %lld",
+                    static_cast<long long>(this->fixed_batch_));
+    } else {
+      YOLO_LOG_INFO("  batch padding: dynamic batch padded to %lld image(s)",
+                    static_cast<long long>(this->pad_to_batch_));
+    }
+  }
+
   for (std::size_t i = 0; i < this->num_output_nodes; ++i) {
     // Keep the TypeInfo alive: the ConstTensorTypeAndShapeInfo view points into
     // it, so binding it to a temporary leaves the shape dangling.
@@ -428,27 +502,23 @@ Model::Model(yolo_ros::yolo::utils::YoloParams params, const std::string &task)
   }
 
   YOLO_LOG_INFO("  onnxruntime=%s  classes=%zu (%s)",
-                Ort::GetVersionString().c_str(), this->class_names.size(),
+                compat::version_string().c_str(), this->class_names.size(),
                 this->class_names_from_metadata_ ? "ONNX metadata"
                                                  : "coco.names fallback");
   try {
     const Ort::ModelMetadata metadata = this->session.GetModelMetadata();
 
-    for (const auto &key :
-         metadata.GetCustomMetadataMapKeysAllocated(allocator)) {
-      const std::string name = key.get();
-
+    for (const std::string &name : compat::metadata_keys(metadata)) {
       if (name == "names") {
         YOLO_LOG_INFO("  metadata: names=<%zu classes>",
                       this->class_names.size());
         continue;
       }
 
-      auto value = metadata.LookupCustomMetadataMapAllocated(
-          name.c_str(), static_cast<OrtAllocator *>(allocator));
+      const auto value = compat::lookup_metadata(metadata, name.c_str());
 
       if (value) {
-        YOLO_LOG_INFO("  metadata: %s=%s", name.c_str(), value.get());
+        YOLO_LOG_INFO("  metadata: %s=%s", name.c_str(), value->c_str());
       }
     }
   } catch (const Ort::Exception &e) {
@@ -465,12 +535,10 @@ void yolo_ros::engine::Model::load_class_names() {
   //    {"0": "person", ...}; both are handled here).
   try {
     const Ort::ModelMetadata metadata = this->session.GetModelMetadata();
-    Ort::AllocatorWithDefaultOptions allocator;
-    auto names_value = metadata.LookupCustomMetadataMapAllocated(
-        "names", static_cast<OrtAllocator *>(allocator));
+    const auto names_value = compat::lookup_metadata(metadata, "names");
 
     if (names_value) {
-      const std::string names(names_value.get());
+      const std::string names(*names_value);
       std::map<int, std::string> indexed_names;
       int max_index = -1;
       const std::regex name_re(R"((\d+):\s*['"]([^'"]*)['"])");
@@ -533,8 +601,8 @@ void yolo_ros::engine::Model::load_class_names() {
 }
 
 std::vector<yolo_msgs::msg::Detection>
-yolo_ros::engine::Model::detect(const cv::Mat &image) {
-  auto batched = this->detect_batch({image});
+yolo_ros::engine::Model::detect(const cv::Mat &image, bool image_is_rgb) {
+  auto batched = this->detect_batch({image}, {image_is_rgb});
 
   if (batched.empty()) {
     return {};
@@ -544,7 +612,8 @@ yolo_ros::engine::Model::detect(const cv::Mat &image) {
 }
 
 std::vector<std::vector<yolo_msgs::msg::Detection>>
-yolo_ros::engine::Model::detect_batch(const std::vector<cv::Mat> &images) {
+yolo_ros::engine::Model::detect_batch(const std::vector<cv::Mat> &images,
+                                      const std::vector<bool> &image_is_rgb) {
   std::vector<std::vector<yolo_msgs::msg::Detection>> results;
   const std::size_t count = images.size();
 
@@ -552,24 +621,35 @@ yolo_ros::engine::Model::detect_batch(const std::vector<cv::Mat> &images) {
     return results;
   }
 
-  // A dynamic batch axis accepts any count; a fixed axis forces the chunk
-  // size. A partial final chunk is padded by repeating its last image and the
-  // padded results are dropped, so a stock batch-1 model keeps working.
-  const std::size_t chunk = this->fixed_batch_ > 0
-                                ? static_cast<std::size_t>(this->fixed_batch_)
-                                : count;
+  // Missing flags mean BGR, the historical detect_batch() contract.
+  std::vector<bool> rgb = image_is_rgb;
+
+  if (rgb.size() < count) {
+    rgb.resize(count, false);
+  }
+
+  // A dynamic batch axis accepts any count, but TensorRT profiles it from the
+  // observed min/max; padding to a stable size keeps the cached engine valid.
+  // A fixed axis forces its own chunk size. A partial final chunk is padded by
+  // repeating its last image and the padded results are dropped, so a stock
+  // batch-1 model keeps working.
+  const std::size_t chunk =
+      resolve_batch_chunk(this->fixed_batch_, this->pad_to_batch_, count);
   results.reserve(count);
 
   for (std::size_t start = 0; start < count; start += chunk) {
     const std::size_t valid = std::min(chunk, count - start);
     std::vector<cv::Mat> group(images.begin() + start,
                                images.begin() + start + valid);
+    std::vector<bool> group_rgb(rgb.begin() + start,
+                                rgb.begin() + start + valid);
 
     while (group.size() < chunk) {
       group.push_back(group.back());
+      group_rgb.push_back(group_rgb.back());
     }
 
-    auto group_results = this->run_batch(group);
+    auto group_results = this->run_batch(group, group_rgb);
 
     for (std::size_t i = 0; i < valid; ++i) {
       results.push_back(std::move(group_results[i]));
@@ -580,7 +660,8 @@ yolo_ros::engine::Model::detect_batch(const std::vector<cv::Mat> &images) {
 }
 
 std::vector<std::vector<yolo_msgs::msg::Detection>>
-yolo_ros::engine::Model::run_batch(const std::vector<cv::Mat> &images) {
+yolo_ros::engine::Model::run_batch(const std::vector<cv::Mat> &images,
+                                   const std::vector<bool> &image_is_rgb) {
   const std::size_t count = images.size();
   std::vector<int64_t> input_tensor_shape =
       this->input_channel_last_
@@ -595,7 +676,8 @@ yolo_ros::engine::Model::run_batch(const std::vector<cv::Mat> &images) {
   this->input_buffer_.resize(per_image * count);
 
   for (std::size_t i = 0; i < count; ++i) {
-    this->preprocess_into(images[i], input_tensor_shape, i);
+    const bool rgb = i < image_is_rgb.size() ? image_is_rgb[i] : false;
+    this->preprocess_into(images[i], input_tensor_shape, i, rgb);
   }
 
   auto preds = this->inference(input_tensor_shape);
@@ -614,7 +696,7 @@ yolo_ros::engine::Model::run_batch(const std::vector<cv::Mat> &images) {
 
 void yolo_ros::engine::Model::preprocess_into(
     const cv::Mat &image, const std::vector<int64_t> &input_tensor_shape,
-    std::size_t index) {
+    std::size_t index, bool image_is_rgb) {
   const int H =
       static_cast<int>(this->input_channel_last_ ? input_tensor_shape[1]
                                                  : input_tensor_shape[2]);
@@ -624,8 +706,14 @@ void yolo_ros::engine::Model::preprocess_into(
   cv::Mat resized_image = yolo_ros::yolo::utils::letterbox(
       image, cv::Size(W, H), cv::Scalar(114, 114, 114));
 
-  if (this->input_is_rgb_) {
-    resized_image = yolo_ros::yolo::utils::bgr_to_rgb(resized_image);
+  // Swap channels only when the source order differs from the model input.
+  // A camera publishing rgb8 reaches this point without any RGB -> BGR -> RGB
+  // round trip. Convert into a distinct Mat so an aliased source buffer is
+  // never modified in place.
+  if (this->input_is_rgb_ != image_is_rgb) {
+    cv::Mat swapped;
+    cv::cvtColor(resized_image, swapped, cv::COLOR_RGB2BGR);
+    resized_image = std::move(swapped);
   }
 
   resized_image.convertTo(resized_image, CV_32FC3, 1.0 / 255.0);
@@ -654,7 +742,7 @@ void yolo_ros::engine::Model::preprocess_into(
 
 std::vector<Ort::Value>
 yolo_ros::engine::Model::inference(std::vector<int64_t> &input_tensor_shape) {
-#if defined(YOLO_ROS_HAS_CUDA_RUNTIME)
+#if defined(YOLO_ROS_HAS_CUDA_RUNTIME) && !YOLO_ORT_LEGACY
   if (this->cuda_graph_) {
     try {
       const std::size_t bytes = this->input_buffer_.size() * sizeof(float);
@@ -680,6 +768,25 @@ yolo_ros::engine::Model::inference(std::vector<int64_t> &input_tensor_shape) {
   }
 #endif
 
+  const bool first_inference = this->first_inference_;
+  if (first_inference) {
+    this->first_inference_ = false;
+
+    if (this->active_provider_ == "tensorrt") {
+      YOLO_LOG_INFO("Running the first inference; TensorRT is building or "
+                    "loading the engine now and this can take several "
+                    "minutes...");
+      if (!this->trt_cache_path_.empty()) {
+        YOLO_LOG_INFO("TensorRT engine cache: %s",
+                      this->trt_cache_path_.c_str());
+      }
+    } else {
+      YOLO_LOG_INFO("Running the first inference...");
+    }
+  }
+
+  const auto inference_start = std::chrono::steady_clock::now();
+
   size_t input_tensor_size =
       std::accumulate(input_tensor_shape.begin(), input_tensor_shape.end(), 1,
                       std::multiplies<int64_t>());
@@ -692,6 +799,23 @@ yolo_ros::engine::Model::inference(std::vector<int64_t> &input_tensor_shape) {
   std::vector<Ort::Value> predictions = this->session.Run(
       Ort::RunOptions{nullptr}, this->inputNames.data(), &input_tensor,
       this->num_input_nodes, this->outputNames.data(), this->num_output_nodes);
+
+  if (first_inference) {
+    const double inference_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      inference_start)
+            .count();
+    YOLO_LOG_INFO("First inference completed in %.2f s.", inference_seconds);
+
+    if (this->active_provider_ == "tensorrt") {
+      if (!this->trt_cache_path_.empty()) {
+        YOLO_LOG_INFO("TensorRT engine ready; cache: %s",
+                      this->trt_cache_path_.c_str());
+      } else {
+        YOLO_LOG_INFO("TensorRT engine ready.");
+      }
+    }
+  }
 
   return predictions;
 }

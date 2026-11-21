@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/camera/camera_streams.hpp"
 
@@ -31,10 +48,10 @@ protected:
   static rclcpp::NodeOptions
   camera_options(const std::vector<rclcpp::Parameter> &extra) {
     std::vector<rclcpp::Parameter> parameters{
-        rclcpp::Parameter("cam0.rgb_topic", "/camera0/image"),
-        rclcpp::Parameter("cam0.depth_topic", "/camera0/depth"),
-        rclcpp::Parameter("cam0.depth_info_topic", "/camera0/info"),
-        rclcpp::Parameter("cam1.rgb_topic", "/camera1/image"),
+        rclcpp::Parameter("cam0.rgb.topic", "/camera0/image"),
+        rclcpp::Parameter("cam0.depth.topic", "/camera0/depth"),
+        rclcpp::Parameter("cam0.depth.info_topic", "/camera0/info"),
+        rclcpp::Parameter("cam1.rgb.topic", "/camera1/image"),
     };
     parameters.insert(parameters.end(), extra.begin(), extra.end());
     rclcpp::NodeOptions options;
@@ -101,7 +118,7 @@ TEST_F(CameraStreamsTest, ConfigureValidatesAndResolves) {
 
 TEST_F(CameraStreamsTest, RejectsDepthWithoutInfo) {
   auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
-      "streams_test", camera_options({rclcpp::Parameter("cam1.depth_topic",
+      "streams_test", camera_options({rclcpp::Parameter("cam1.depth.topic",
                                                         "/camera1/depth")}));
   yolo_ros::Blackboard blackboard;
   yolo_ros::CameraStreams streams(blackboard, node->get_logger());
@@ -114,7 +131,7 @@ TEST_F(CameraStreamsTest, RejectsDepthWithoutInfo) {
 TEST_F(CameraStreamsTest, RejectsDuplicateTopics) {
   auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
       "streams_test",
-      camera_options({rclcpp::Parameter("cam1.rgb_topic", "/camera0/image")}));
+      camera_options({rclcpp::Parameter("cam1.rgb.topic", "/camera0/image")}));
   yolo_ros::Blackboard blackboard;
   yolo_ros::CameraStreams streams(blackboard, node->get_logger());
 
@@ -132,13 +149,13 @@ TEST_F(CameraStreamsTest, RejectsMissingRgbTopic) {
   std::string error;
   EXPECT_FALSE(streams.configure(*node, {"cam2"}, error));
   EXPECT_NE(error.find("cam2"), std::string::npos);
-  EXPECT_NE(error.find("rgb_topic"), std::string::npos);
+  EXPECT_NE(error.find("rgb.topic"), std::string::npos);
 }
 
 TEST_F(CameraStreamsTest, FailedConfigureLeavesNoPartialState) {
   auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
       "streams_test",
-      camera_options({rclcpp::Parameter("cam1.rgb_topic", "")}));
+      camera_options({rclcpp::Parameter("cam1.rgb.topic", "")}));
   yolo_ros::Blackboard blackboard;
   yolo_ros::CameraStreams streams(blackboard, node->get_logger());
 
@@ -284,9 +301,9 @@ TEST_F(CameraStreamsTest, DeactivateThenActivateAgain) {
 TEST_F(CameraStreamsTest, ActivateInvalidTopicRollsBack) {
   auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
       "streams_test",
-      camera_options({rclcpp::Parameter("cam0.depth_topic", ""),
-                      rclcpp::Parameter("cam0.depth_info_topic", ""),
-                      rclcpp::Parameter("cam1.rgb_topic", "bad topic!")}));
+      camera_options({rclcpp::Parameter("cam0.depth.topic", ""),
+                      rclcpp::Parameter("cam0.depth.info_topic", ""),
+                      rclcpp::Parameter("cam1.rgb.topic", "bad topic!")}));
   yolo_ros::Blackboard blackboard;
   yolo_ros::CameraStreams streams(blackboard, node->get_logger());
 

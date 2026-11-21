@@ -1,5 +1,22 @@
-// Copyright (c) 2026 Miguel Ángel González Santamarta
-// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Miguel Ángel González Santamarta
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include "yolo_ros/camera/camera_streams.hpp"
 
@@ -52,40 +69,40 @@ bool CameraStreams::configure(rclcpp_lifecycle::LifecycleNode &node,
     CameraConfig camera;
     camera.name = name;
 
-    if (!node.has_parameter(name + ".rgb_topic")) {
-      node.declare_parameter<std::string>(name + ".rgb_topic", "");
+    if (!node.has_parameter(name + ".rgb.topic")) {
+      node.declare_parameter<std::string>(name + ".rgb.topic", "");
     }
 
-    if (!node.has_parameter(name + ".depth_topic")) {
-      node.declare_parameter<std::string>(name + ".depth_topic", "");
+    if (!node.has_parameter(name + ".depth.topic")) {
+      node.declare_parameter<std::string>(name + ".depth.topic", "");
     }
 
-    if (!node.has_parameter(name + ".depth_info_topic")) {
-      node.declare_parameter<std::string>(name + ".depth_info_topic", "");
+    if (!node.has_parameter(name + ".depth.info_topic")) {
+      node.declare_parameter<std::string>(name + ".depth.info_topic", "");
     }
 
-    if (!node.has_parameter(name + ".image_reliability")) {
-      node.declare_parameter<int>(name + ".image_reliability", 2);
+    if (!node.has_parameter(name + ".rgb.reliability")) {
+      node.declare_parameter<int>(name + ".rgb.reliability", 2);
     }
 
-    if (!node.has_parameter(name + ".depth_reliability")) {
-      node.declare_parameter<int>(name + ".depth_reliability", 2);
+    if (!node.has_parameter(name + ".depth.reliability")) {
+      node.declare_parameter<int>(name + ".depth.reliability", 2);
     }
 
-    node.get_parameter(name + ".rgb_topic", camera.rgb_topic);
-    node.get_parameter(name + ".depth_topic", camera.depth_topic);
-    node.get_parameter(name + ".depth_info_topic", camera.depth_info_topic);
-    node.get_parameter(name + ".image_reliability", camera.image_reliability);
-    node.get_parameter(name + ".depth_reliability", camera.depth_reliability);
+    node.get_parameter(name + ".rgb.topic", camera.rgb_topic);
+    node.get_parameter(name + ".depth.topic", camera.depth_topic);
+    node.get_parameter(name + ".depth.info_topic", camera.depth_info_topic);
+    node.get_parameter(name + ".rgb.reliability", camera.image_reliability);
+    node.get_parameter(name + ".depth.reliability", camera.depth_reliability);
 
     if (camera.rgb_topic.empty()) {
-      error = "camera '" + name + "': missing '" + name + ".rgb_topic'";
+      error = "camera '" + name + "': missing '" + name + ".rgb.topic'";
       return false;
     }
 
     if (camera.depth_topic.empty() != camera.depth_info_topic.empty()) {
-      error = "camera '" + name +
-              "': depth_topic and depth_info_topic must be set together";
+      error = "camera '" + name + "': '" + name + ".depth.topic' and '" + name +
+              ".depth.info_topic' must be set together";
       return false;
     }
 
